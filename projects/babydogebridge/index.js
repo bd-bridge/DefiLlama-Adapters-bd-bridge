@@ -1,5 +1,7 @@
 const sdk = require('@defillama/sdk');
-const { getTokenAccountBalances } = require('../helper/solana');
+const { getConnection, decodeAccount } = require('../helper/solana');
+const { PublicKey } = require('@solana/web3.js');
+const { sumTokens } = require('../helper/unwrapLPs');
 
 
 const SOLANA_CONTRACT = '4bhMeAzoU3EenGxKXTo7nWjKVNqg1YTrN6rHLCasyvxs';
@@ -8,41 +10,29 @@ const BSC_OWNER = '0xac65072FC013442E14CCe3C8dc47e10dEe3E0683';
 const BSC_TOKEN = '0xc748673057861a797275CD8A068AbB95A902e8de';
 
 
+/**
+ * Minimal function to fetch the balance of a Solana token account.
+ * It uses getConnection() and decodeAccount() from the helper.
+ */
+async function fetchTokenAccountBalance(tokenAccount, chain = 'solana') {
+    if (typeof tokenAccount === 'string') tokenAccount = new PublicKey(tokenAccount);
+    const connection = getConnection(chain);
+    const accountInfo = await connection.getAccountInfo(tokenAccount);
+    if (!accountInfo) throw new Error(`Account info not found for ${tokenAccount.toString()}`);
+    // Decode the account as a 'tokenAccount'
+    const decoded = decodeAccount('tokenAccount', accountInfo);
+    return decoded.amount.toString();
+}
+
+
 async function solanaTvl() {
-    const balances = await getTokenAccountBalances([SOLANA_CONTRACT], { chain: 'solana' });
-    const tokenBalance = balances[SOLANA_TOKEN_MINT] || "0";
+    const tokenBalance = await fetchTokenAccountBalance(SOLANA_CONTRACT, 'solana');
     return { [`solana:${SOLANA_TOKEN_MINT}`]: tokenBalance };
 }
 
 async function bscTvl(timestamp, block, chainBlocks) {
     const balances = {};
-    await sdk.util.sumTokens(
-        balances,
-        [[BSC_TOKEN, BSC_OWNER]],
-        block,
-        chainBlocks.bsc,
-        "bsc"
-    );
-    return balances;
-}
-
-
-async function tvl(timestamp, block, chainBlocks) {
-    const balances = {};
-
-    const [bscBalances, solanaBalances] = await Promise.all([
-        bscTvl(timestamp, block, chainBlocks),
-        solanaTvl()
-    ]);
-
-    for (const [token, balance] of Object.entries(bscBalances)) {
-        sdk.util.sumSingleBalance(balances, token, balance);
-    }
-
-    for (const [token, balance] of Object.entries(solanaBalances)) {
-        sdk.util.sumSingleBalance(balances, token, balance);
-    }
-
+    await sumTokens(balances, [[BSC_TOKEN, BSC_OWNER]], chainBlocks.bsc, "bsc");
     return balances;
 }
 
@@ -56,5 +46,4 @@ module.exports = {
     bsc: {
         tvl: bscTvl,
     },
-    tvl,
 };
